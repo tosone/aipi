@@ -1,0 +1,4 @@
+{
+  "deps": ["yaml-cpp", "fmt", "spdlog", "cli11", "ggml[opencl]"],
+  "export": ["yaml-cpp", "fmt", "spdlog", "cli11", "ggml"]
+}
