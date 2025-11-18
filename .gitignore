@@ -1,2 +1,4 @@
-pkgs/
+vcpkg_installed/
 bin/
+build/
+*.gguf

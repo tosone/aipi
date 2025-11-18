@@ -1,0 +1,8 @@
+{
+  "name": "aipi",
+  "version": "1.0.0",
+  "description": "ai pi for you.",
+  "homepage": "https://github.com/tosone/aipi",
+  "license": "MIT",
+  "dependencies": ["fmt", "spdlog", { "name": "ggml", "features": ["blas"] }]
+}

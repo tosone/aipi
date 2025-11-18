@@ -3,6 +3,8 @@
 #include "ggml.h"
 #include "gguf.h"
 
+#include <spdlog/spdlog.h>
+
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -31,25 +33,38 @@ struct simple_gguf_model {
   struct ggml_tensor *output = nullptr;
 };
 
-// 日志回调函数
 static void log_callback_impl(ggml_log_level level, const char *text, void *user_data) {
-  (void)level;
   (void)user_data;
-  fputs(text, stderr);
-  fflush(stderr);
+  std::string msg(text);
+  if (!msg.empty() && msg.back() == '\n') {
+    msg.pop_back();
+  }
+
+  switch (level) {
+  case GGML_LOG_LEVEL_ERROR:
+    spdlog::error("[GGML] {}", msg);
+    break;
+  case GGML_LOG_LEVEL_WARN:
+    spdlog::warn("[GGML] {}", msg);
+    break;
+  case GGML_LOG_LEVEL_INFO:
+    spdlog::info("[GGML] {}", msg);
+    break;
+  default:
+    spdlog::debug("[GGML] {}", msg);
+    break;
+  }
 }
 
 // 从 GGUF 文件加载模型权重到后端缓冲区
-bool load_weights_from_gguf(const char *fname, struct gguf_context *ctx_gguf,
-                            struct ggml_context *ctx_weights) {
+bool load_weights_from_gguf(const char *fname, struct gguf_context *ctx_gguf, struct ggml_context *ctx_weights) {
   FILE *f = fopen(fname, "rb");
   if (!f) {
-    fprintf(stderr, "Error: could not open file %s\n", fname);
+    spdlog::error("Could not open file {}", fname);
     return false;
   }
 
-  // 4MB 缓冲区用于批量读取
-  const size_t buf_size = 4 * 1024 * 1024;
+  const size_t buf_size = 4 << 20;
   void *buf = malloc(buf_size);
   if (!buf) {
     fclose(f);
@@ -57,14 +72,14 @@ bool load_weights_from_gguf(const char *fname, struct gguf_context *ctx_gguf,
   }
 
   const int n_tensors = gguf_get_n_tensors(ctx_gguf);
-  printf("Loading %d tensors from GGUF file...\n", n_tensors);
+  spdlog::info("Loading {} tensors from GGUF file...", n_tensors);
 
   for (int i = 0; i < n_tensors; i++) {
     const char *name = gguf_get_tensor_name(ctx_gguf, i);
     struct ggml_tensor *tensor = ggml_get_tensor(ctx_weights, name);
 
     if (!tensor) {
-      printf("Warning: tensor %s not found in context\n", name);
+      spdlog::warn("Tensor {} not found in context", name);
       continue;
     }
 
@@ -72,21 +87,21 @@ bool load_weights_from_gguf(const char *fname, struct gguf_context *ctx_gguf,
     const size_t offs = gguf_get_data_offset(ctx_gguf) + gguf_get_tensor_offset(ctx_gguf, i);
 
     if (fseek(f, offs, SEEK_SET) != 0) {
-      fprintf(stderr, "Error: failed to seek to tensor %s\n", name);
+      spdlog::error("Failed to seek to tensor {}", name);
       free(buf);
       fclose(f);
       return false;
     }
 
     const size_t nbytes = ggml_nbytes(tensor);
-    printf("  Loading tensor: %s [%zu bytes]\n", name, nbytes);
+    spdlog::info("  Loading tensor: {} [{} bytes]", name, nbytes);
 
     // 分块读取大张量
     for (size_t pos = 0; pos < nbytes; pos += buf_size) {
       const size_t chunk_size = (buf_size < nbytes - pos) ? buf_size : (nbytes - pos);
 
       if (fread(buf, 1, chunk_size, f) != chunk_size) {
-        fprintf(stderr, "Error: failed to read tensor data for %s\n", name);
+        spdlog::error("Failed to read tensor data for {}", name);
         free(buf);
         fclose(f);
         return false;
@@ -99,7 +114,7 @@ bool load_weights_from_gguf(const char *fname, struct gguf_context *ctx_gguf,
 
   free(buf);
   fclose(f);
-  printf("Successfully loaded all tensors\n");
+  spdlog::info("Successfully loaded all tensors");
   return true;
 }
 
@@ -114,11 +129,11 @@ bool init_model(simple_gguf_model &model, const char *model_path) {
   // 初始化最佳后端 (GPU 优先，然后是 CPU)
   model.backend = ggml_backend_init_best();
   if (!model.backend) {
-    fprintf(stderr, "Error: failed to initialize backend\n");
+    spdlog::error("Failed to initialize backend");
     return false;
   }
 
-  printf("Using backend: %s\n", ggml_backend_name(model.backend));
+  spdlog::info("Using backend: {}", ggml_backend_name(model.backend));
 
   // 从 GGUF 文件加载模型
   struct gguf_init_params gguf_params = {
@@ -128,39 +143,39 @@ bool init_model(simple_gguf_model &model, const char *model_path) {
 
   model.ctx_gguf = gguf_init_from_file(model_path, gguf_params);
   if (!model.ctx_gguf) {
-    fprintf(stderr, "Error: failed to load GGUF file %s\n", model_path);
+    spdlog::error("Failed to load GGUF file {}", model_path);
     return false;
   }
 
-  printf("GGUF file loaded successfully\n");
-  printf("  Version: %u\n", gguf_get_version(model.ctx_gguf));
-  printf("  Tensors: %lld\n", gguf_get_n_tensors(model.ctx_gguf));
-  printf("  KV pairs: %lld\n", gguf_get_n_kv(model.ctx_gguf));
+  spdlog::info("GGUF file loaded successfully");
+  spdlog::info("  Version: {}", gguf_get_version(model.ctx_gguf));
+  spdlog::info("  Tensors: {}", gguf_get_n_tensors(model.ctx_gguf));
+  spdlog::info("  KV pairs: {}", gguf_get_n_kv(model.ctx_gguf));
 
   // 打印一些元数据信息
   for (int64_t i = 0; i < gguf_get_n_kv(model.ctx_gguf); i++) {
     const char *key = gguf_get_key(model.ctx_gguf, i);
     const enum gguf_type type = gguf_get_kv_type(model.ctx_gguf, i);
 
-    printf("  KV[%lld]: %s (type: %s)\n", i, key, gguf_type_name(type));
+    spdlog::info("  KV[{}]: {} (type: {})", i, key, gguf_type_name(type));
 
     // 打印一些字符串类型的值作为示例
     if (type == GGUF_TYPE_STRING) {
       const char *value = gguf_get_val_str(model.ctx_gguf, i);
-      printf("    Value: %s\n", value);
+      spdlog::info("    Value: {}", value);
     }
   }
 
   // 为权重分配后端缓冲区
   model.buffer_weights = ggml_backend_alloc_ctx_tensors(model.ctx_weights, model.backend);
   if (!model.buffer_weights) {
-    fprintf(stderr, "Error: failed to allocate weights buffer\n");
+    spdlog::error("Failed to allocate weights buffer");
     return false;
   }
 
   // 加载权重数据
   if (!load_weights_from_gguf(model_path, model.ctx_gguf, model.ctx_weights)) {
-    fprintf(stderr, "Error: failed to load weights\n");
+    spdlog::error("Failed to load weights");
     return false;
   }
 
@@ -174,7 +189,7 @@ bool init_model(simple_gguf_model &model, const char *model_path) {
     }
   }
 
-  printf("Model initialized successfully with %d tensors\n", (int)model.tensors.size());
+  spdlog::info("Model initialized successfully with {} tensors", (int)model.tensors.size());
   return true;
 }
 
@@ -219,7 +234,7 @@ struct ggml_cgraph *build_inference_graph(simple_gguf_model &model,
     ggml_set_output(model.output);
     ggml_build_forward_expand(graph, model.output);
 
-    printf("Warning: weight/bias tensors not found, using identity transformation\n");
+    spdlog::warn("weight/bias tensors not found, using identity transformation");
   }
 
   return graph;
@@ -239,7 +254,7 @@ bool run_inference(simple_gguf_model &model, const float *input_data,
 
   struct ggml_context *ctx_compute = ggml_init(params);
   if (!ctx_compute) {
-    fprintf(stderr, "Error: failed to create compute context\n");
+    spdlog::error("Failed to create compute context");
     return false;
   }
 
@@ -249,14 +264,14 @@ bool run_inference(simple_gguf_model &model, const float *input_data,
   // 创建图分配器
   ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
   if (!allocr) {
-    fprintf(stderr, "Error: failed to create allocator\n");
+    spdlog::error("Failed to create allocator");
     ggml_free(ctx_compute);
     return false;
   }
 
   // 分配计算图内存
   if (!ggml_gallocr_alloc_graph(allocr, graph)) {
-    fprintf(stderr, "Error: failed to allocate graph\n");
+    spdlog::error("Failed to allocate graph");
     ggml_gallocr_free(allocr);
     ggml_free(ctx_compute);
     return false;
@@ -266,9 +281,9 @@ bool run_inference(simple_gguf_model &model, const float *input_data,
   ggml_backend_tensor_set(model.input, input_data, 0, input_size * sizeof(float));
 
   // 执行推理
-  printf("Running inference...\n");
+  spdlog::info("Running inference...");
   if (ggml_backend_graph_compute(model.backend, graph) != GGML_STATUS_SUCCESS) {
-    fprintf(stderr, "Error: failed to compute graph\n");
+    spdlog::error("Failed to compute graph");
     ggml_gallocr_free(allocr);
     ggml_free(ctx_compute);
     return false;
@@ -279,7 +294,7 @@ bool run_inference(simple_gguf_model &model, const float *input_data,
   const size_t copy_size = std::min(output_bytes, (size_t)(output_size * sizeof(float)));
   ggml_backend_tensor_get(model.output, output_data, 0, copy_size);
 
-  printf("Inference completed successfully\n");
+  spdlog::info("Inference completed successfully");
 
   // 清理
   ggml_gallocr_free(allocr);
@@ -311,8 +326,11 @@ void free_model(simple_gguf_model &model) {
 
 // 主函数示例
 int main(int argc, char **argv) {
+  spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%L] %v");
+  spdlog::set_level(spdlog::level::debug);
+
   if (argc != 2) {
-    fprintf(stderr, "Usage: %s <model.gguf>\n", argv[0]);
+    spdlog::error("Usage: {} <model.gguf>", argv[0]);
     return 1;
   }
 
@@ -324,9 +342,9 @@ int main(int argc, char **argv) {
   simple_gguf_model model = {};
 
   // 加载模型
-  printf("Loading model from %s...\n", model_path);
+  spdlog::info("Loading model from {}...", model_path);
   if (!init_model(model, model_path)) {
-    fprintf(stderr, "Failed to initialize model\n");
+    spdlog::error("Failed to initialize model");
     return 1;
   }
 
@@ -342,36 +360,33 @@ int main(int argc, char **argv) {
     input_data[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // [-1, 1]
   }
 
-  printf("Input data: ");
-  for (int i = 0; i < std::min(10, input_size); i++) {
-    printf("%.3f ", input_data[i]);
-  }
-  printf("%s\n", input_size > 10 ? "..." : "");
+  spdlog::info("Input data: {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}{}",
+               input_data[0], input_data[1], input_data[2], input_data[3], input_data[4],
+               input_data[5], input_data[6], input_data[7], input_data[8], input_data[9],
+               input_size > 10 ? "..." : "");
 
-  // 执行推理
   const int64_t t_start = ggml_time_us();
 
   if (!run_inference(model, input_data.data(), input_size,
                      output_data.data(), output_size)) {
-    fprintf(stderr, "Inference failed\n");
+    spdlog::error("Inference failed");
     free_model(model);
     return 1;
   }
 
   const int64_t t_end = ggml_time_us();
 
-  printf("Inference time: %.2f ms\n", (t_end - t_start) / 1000.0);
+  spdlog::info("Inference time: {:.2f} ms", (t_end - t_start) / 1000.0);
 
   // 打印输出结果
-  printf("Output data: ");
-  for (int i = 0; i < std::min(10, output_size); i++) {
-    printf("%.3f ", output_data[i]);
-  }
-  printf("%s\n", output_size > 10 ? "..." : "");
+  spdlog::info("Output data: {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}{}",
+               output_data[0], output_data[1], output_data[2], output_data[3], output_data[4],
+               output_data[5], output_data[6], output_data[7], output_data[8], output_data[9],
+               output_size > 10 ? "..." : "");
 
   // 清理资源
   free_model(model);
 
-  printf("Done!\n");
+  spdlog::info("Done!");
   return 0;
 }
