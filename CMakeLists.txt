@@ -10,7 +10,7 @@ add_definitions(-DAIPI_VERSION=${AIPI_VERSION})
 
 project(aipi)
 
-add_executable(aipi run.cc)
+add_executable(aipi run1.cc)
 
 if (CMAKE_BUILD_TYPE STREQUAL release)
   add_custom_command(TARGET aipi POST_BUILD COMMAND strip aipi)
@@ -18,6 +18,9 @@ endif ()
 
 find_package(ggml CONFIG REQUIRED)
 target_link_libraries(aipi PRIVATE ggml::all ggml::ggml)
+
+find_package(llama CONFIG REQUIRED)
+target_link_libraries(aipi PRIVATE llama)
 
 find_package(fmt CONFIG REQUIRED)
 target_link_libraries(aipi PRIVATE fmt::fmt-header-only)

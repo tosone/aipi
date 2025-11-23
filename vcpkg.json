@@ -4,5 +4,15 @@
   "description": "ai pi for you.",
   "homepage": "https://github.com/tosone/aipi",
   "license": "MIT",
-  "dependencies": ["fmt", "spdlog", { "name": "ggml", "features": ["blas"] }]
+  "dependencies": [
+    "fmt",
+    {
+      "name": "ggml",
+      "features": [
+        "blas"
+      ]
+    },
+    "spdlog",
+    "llama-cpp"
+  ]
 }
