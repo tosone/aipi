@@ -10,7 +10,7 @@ add_definitions(-DAIPI_VERSION=${AIPI_VERSION})
 
 project(aipi)
 
-add_executable(aipi run1.cc)
+add_executable(aipi run2.cc)
 
 if (CMAKE_BUILD_TYPE STREQUAL release)
   add_custom_command(TARGET aipi POST_BUILD COMMAND strip aipi)

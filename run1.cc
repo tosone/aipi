@@ -1,7 +1,7 @@
 #include "llama.h"
 
-#include <spdlog/spdlog.h>
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cassert>
@@ -66,6 +66,7 @@ bool init_llama_model(LlamaCppModel &model, const char *model_path) {
   spdlog::info("  Training context: {}", llama_model_n_ctx_train(model.model));
   spdlog::info("  Number of layers: {}", llama_model_n_layer(model.model));
   spdlog::info("  Number of heads: {}", llama_model_n_head(model.model));
+  spdlog::info("  Number of parameters: {}", llama_model_n_params(model.model));
 
   // 设置上下文参数
   auto ctx_params = llama_context_default_params();
@@ -251,13 +252,13 @@ std::string generate_text(LlamaCppModel &model, const std::string &prompt, int m
   }
 
   spdlog::info("Starting generation...");
-  
+
   // 开始流式输出显示
   std::cout << "助手: " << std::flush;
 
   // 6. 逐步生成新token (generation阶段)
   std::vector<llama_token> generated_tokens;
-  
+
   for (int i = 0; i < max_new_tokens; i++) {
     // 等待计算完成
     llama_synchronize(model.ctx);
@@ -281,14 +282,14 @@ std::string generate_text(LlamaCppModel &model, const std::string &prompt, int m
     // 改进的贪心采样 - 选择概率最高的token
     llama_token next_token = 0;
     float max_logit = -std::numeric_limits<float>::infinity(); // 使用负无穷大作为初始值
-    
+
     for (int j = 0; j < model.n_vocab; j++) {
       if (logits[j] > max_logit) {
         max_logit = logits[j];
         next_token = j;
       }
     }
-    
+
     spdlog::debug("Selected token: {} with logit: {:.6f}", next_token, max_logit);
 
     // 检查是否是结束token
@@ -300,16 +301,16 @@ std::string generate_text(LlamaCppModel &model, const std::string &prompt, int m
     // 添加到生成的tokens和对话历史
     generated_tokens.push_back(next_token);
     model.conversation_tokens.push_back(next_token);
-    
+
     // 实时显示生成的token
     std::vector<llama_token> single_token = {next_token};
     std::string token_text = detokenize_tokens(model, single_token);
-    
+
     // 调试信息：显示token ID和转换后的文本
     if (i < 5) { // 只在前几个中打印详细信息
-      spdlog::debug("Token {}: ID={}, text='{}'", i+1, next_token, token_text);
+      spdlog::debug("Token {}: ID={}, text='{}'", i + 1, next_token, token_text);
     }
-    
+
     std::cout << token_text << std::flush; // 立即刷新显示
 
     // 为下一次推理准备单个token的batch
@@ -337,16 +338,16 @@ std::string generate_text(LlamaCppModel &model, const std::string &prompt, int m
       spdlog::debug("Generated {} tokens so far", i + 1);
     }
   }
-  
+
   // 生成结束后换行
   std::cout << std::endl;
-  
+
   // 更新当前位置
   model.current_pos = model.conversation_tokens.size();
 
   spdlog::debug("Generation completed with {} new tokens", generated_tokens.size());
   spdlog::debug("Total conversation tokens: {}", model.conversation_tokens.size());
-  
+
   // 返回生成的文本（用于日志记录）
   std::string response = detokenize_tokens(model, generated_tokens);
   return response;
